@@ -2,6 +2,11 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 const generateToken = (id) => {
+  if (!process.env.JWT_SECRET) {
+    const error = new Error('JWT secret is not configured on the server');
+    error.code = 'JWT_SECRET_MISSING';
+    throw error;
+  }
   return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' });
 };
 
@@ -10,17 +15,18 @@ const generateToken = (id) => {
 const registerUser = async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
 
-    if (!name || !email || !password) {
+    if (!name || !normalizedEmail || !password) {
       return res.status(400).json({ message: 'Please provide all required fields' });
     }
 
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists with this email' });
     }
 
-    const user = await User.create({ name, email, password });
+    const user = await User.create({ name, email: normalizedEmail, password });
     const token = generateToken(user._id);
 
     res.status(201).json({
@@ -38,7 +44,15 @@ const registerUser = async (req, res) => {
       const messages = Object.values(error.errors).map((e) => e.message);
       return res.status(400).json({ message: messages.join(', ') });
     }
-    res.status(500).json({ message: 'Server error during registration' });
+    if (error.code === 11000) {
+      return res.status(400).json({ message: 'User already exists with this email' });
+    }
+    console.error('Register error:', error);
+    res.status(500).json({
+      message: error.code === 'JWT_SECRET_MISSING'
+        ? 'Server is missing JWT_SECRET configuration'
+        : error.message || 'Server error during registration',
+    });
   }
 };
 
@@ -47,12 +61,13 @@ const registerUser = async (req, res) => {
 const loginUser = async (req, res) => {
   try {
     const { email, password } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
 
-    if (!email || !password) {
+    if (!normalizedEmail || !password) {
       return res.status(400).json({ message: 'Please provide email and password' });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password' });
     }
@@ -75,7 +90,12 @@ const loginUser = async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server error during login' });
+    console.error('Login error:', error);
+    res.status(500).json({
+      message: error.code === 'JWT_SECRET_MISSING'
+        ? 'Server is missing JWT_SECRET configuration'
+        : error.message || 'Server error during login',
+    });
   }
 };
 
